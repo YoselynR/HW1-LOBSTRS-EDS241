@@ -553,9 +553,92 @@ d. Discuss the following causal inference assumptions in the context of the MPA 
 > Use the recent lobster abundance data with observations collected up until 2024 (`lobster_sbchannel_24.csv`) to run an analysis evaluating the effect of MPA status on lobster counts using the same focal variables.
 
 a. Create a new script for the analysis on the updated data
+
+Read in data, clean data, and create dataframe with counts and mean lobster size
+
+```{r}
+# Read in data, clean column names
+rawdata24 <- read_csv(here("data/lobster_sbchannel_24.csv"), na = "-99999") %>%
+                        clean_names()
+tidydata24 <- rawdata24 %>%
+  mutate(reef = factor(site, levels = c("AQUE", "CARP", "MOHK", "IVEE", "NAPL"), labels = c("Arroyo Quemado", "Carpinteria", "Mohawk", "Isla Vista", "Naples")))
+# Create dataframe with counts, mean_size, and grouping
+spiny_counts24 <- tidydata24 %>%
+  # Group by site, year, and transect
+  group_by(site, year, transect) %>%
+  # Summarize the total number of lobsters observed
+  summarize(counts = sum(count, na.rm = TRUE), 
+            mean_size = mean(size_mm, na.rm = TRUE), 
+            .groups = "drop") # Ungroup to avoid carry-over
+
+# Create 'mpa' and 'treat' variables using case_when
+spiny_counts24 <- spiny_counts24 %>%
+  mutate(
+    # Create 'mpa' based on site
+    mpa = case_when(
+      site %in% c("NAPL", "IVEE") ~ "MPA",   
+      TRUE ~ "non_MPA"                             
+    ),
+    # Create numeric 'treat' variable (1 for MPA, 0 for non-MPA)
+    treat = case_when(
+      mpa == "MPA" ~ 1,  
+      TRUE ~ 0           
+    )
+  )
+```
+
 b. Run at least 3 regression models & assess model diagnostics
+
+The following regression models show some differences to the data that was previously analyzed. This data includes years up to 2024, adding 6 more years to the data previously analyzed. 
+
+- The lm model is statistically more significant than before, with p values less than 0.05 for the intercept and treatment. The residuals are closer to normal as seen in the normality of residuals. 
+- The Poisson regression model is similar to the Poisson model that was performed for the data up to 2018. The p values are significant for both the intercept and treat. The reduction in deviance from the null model to the fitted model is very small, indicating that the Poisson model doesn’t improve the fit significantly, suggesting overdispersion or misspecification of the model. 
+- The Negative binomial regression model is statistically more significant than before, with p values less than 0.05 for intercept and treatment. The posterior predictive check observed data fits perfectly to the model predictive data and the uniformity of residuals dots fall perfectly along the line. This model passed the overdispersion test and did ok in the zero inflation test. 
+
+```{r}
+# OLS model
+m1_ols24 <- lm(counts ~ treat, data = spiny_counts24)
+# Poisson regression model
+m2_pois24 <- glm(counts ~ treat, family = poisson(link = "log"), data = spiny_counts24)
+# Negative binomial model
+m3_nb24 <- glm.nb(counts ~ treat, data = spiny_counts24)
+# OLS model summary
+print(summary(m1_ols24))
+# Poisson regression model summary
+print(summary(m2_pois24))
+# Negative binomial model summary
+print(summary(m3_nb24))
+# Check models assumptions
+check_model(m1_ols24)
+check_model(m2_pois24)
+check_model(m3_nb24)
+```
+
+```{r}
+check_overdispersion(m3_nb24) # Overdispersion test
+check_zeroinflation(m3_nb24) # Zero inflation test
+```
+
 c. Compare and contrast results with the analysis from the 2012-2018 data sample (~ 2 paragraphs)
 
+- Now, looking at the data up to 2024 as a Negative Binomial regression model estimating how the counts outcome, as number of events or occurrences, changes in relation to both the treatment and the yearly time periods from 2013 (base year is 2012) to 2024, as well as the interaction between treatment and year. It becomes more clear that though the MPA region did increase counts in lobster from 2018 to 2021, by 2023 it is close to even with non MPA regions. This is probably due to the spillover effects previously discussed. For the most part there seems to be a trend in increase and decrease for MPA and non MPA regions suggesting that MPA regions do not positively affect counts. By 2024 non MPA regions have a much smaller count than MPA regions but I would expect this to change and follow the same pattern seen in the previous years. 
+- Having more years to look over changes in patterns is quite helpful, and the statistical models performed demonstrated that by improving residuals. The graph below is better at representing the difference between MPA and non MPA regions counts in lobster. Considering this is only 12 years, it would be good to continue to monitor the pattern and not jump to conclusions. Bias can be very much present and the variables considered are not specific enough. For instance, changes in habitat quality, climate conditions, fishing regulations, and predator-prey relationships could all play a role. Incorporating more specific covariates like environmental factors and fishing pressure into the model might help reduce bias and improve the model’s robustness. Interactions are much more likely between variables and could better help address the bias that may be present.
+
+```{r}
+# Create a new data frame with year as factor
+ff_counts24 <- spiny_counts24 %>% 
+    mutate(year=as_factor(year))
+# Run negative binomial model for counts and treat, add fixed year, add interaction for treat*year
+m5_fixedeffs24 <- glm.nb(
+    counts ~ 
+        treat +
+        year +
+        treat*year,
+    data = ff_counts24)
+# Plot the interaction between treatment and year
+interact_plot(m5_fixedeffs24, pred = year, modx = treat,
+              outcome.scale = "response") # NOTE: y-axis on log-scale
+```
 
 ------------------------------------------------------------------------
 
